@@ -25,7 +25,6 @@ detection: 检测逻辑（必填，核心部分）
   selection: 事件匹配条件（自定义标识符，如selection/filter/exclude）
     FieldName1: 匹配值1（支持字符串、数组、修饰符）
     FieldName2|modifier: 匹配值2（如endswith/contains）
-  timeframe: 时间窗口（可选，如5m/1h，用于聚合检测）
   condition: 触发条件（必填，定义如何触发告警）
 falsepositives: 误报场景（可选，数组/字符串）
 level: 告警级别（可选，informational/low/medium/high/critical）
@@ -35,20 +34,20 @@ fields: 需展示的关键字段（可选，数组形式，如TargetUserName/src
 
 ### 2. 基础规则字段详解（含必填 / 可选、作用与示例）
 
-| 字段名           | 必填 / 可选  | 类型          | 核心作用                                            | 示例与说明                                                   |
-| ---------------- | ------------ | ------------- | --------------------------------------------------- | ------------------------------------------------------------ |
-| `title`          | 必填         | 字符串        | 简洁描述规则检测目标（≤256 字符）                   | `title: Windows Failed Logon (EventID 4625)`                 |
-| `id`             | 可选（推荐） | 字符串        | 全局唯一标识，避免规则冲突                          | `id: 929a690e-bef0-4204-a928-ef5e620d6fcc`（UUID v4，推荐用[UUID 生成器](https://www.uuidgenerator.net/)） |
-| `status`         | 可选         | 枚举          | 规则成熟度，用于筛选和版本管理                      | `status: experimental`（可选值：`experimental`/`testing`/`stable`） |
-| `description`    | 可选         | 字符串        | 详细说明检测场景、目的及攻击背景                    | `description: Detects failed logon events on Windows systems via Security log EventID 4625` |
-| `author`         | 可选         | 字符串 / 数组 | 规则作者（姓名 / 邮箱）                             | `author: John Doe (john.doe@example.com)`                    |
+| 字段名           | 必填 / 可选  | 类型          | 核心作用                                            | 示例与说明                                                                                                                    |
+| ---------------- | ------------ | ------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `title`          | 必填         | 字符串        | 简洁描述规则检测目标（≤256 字符）                   | `title: Windows Failed Logon (EventID 4625)`                                                                                  |
+| `id`             | 可选（推荐） | 字符串        | 全局唯一标识，避免规则冲突                          | `id: 929a690e-bef0-4204-a928-ef5e620d6fcc`（UUID v4，推荐用[UUID 生成器](https://www.uuidgenerator.net/)）                    |
+| `status`         | 可选         | 枚举          | 规则成熟度，用于筛选和版本管理                      | `status: experimental`（可选值：`experimental`/`testing`/`stable`）                                                           |
+| `description`    | 可选         | 字符串        | 详细说明检测场景、目的及攻击背景                    | `description: Detects failed logon events on Windows systems via Security log EventID 4625`                                   |
+| `author`         | 可选         | 字符串 / 数组 | 规则作者（姓名 / 邮箱）                             | `author: John Doe (john.doe@example.com)`                                                                                     |
 | `references`     | 可选         | 数组          | 参考文档（如 MITRE ATT&CK、漏洞公告）               | `references: [- https://attack.mitre.org/techniques/T1110/, - https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-22518]` |
-| `logsource`      | 必填         | 嵌套结构      | 定义日志来源，决定规则适用的日志范围                | 示例：`logsource:``product: windows``service: security``category: logon`（`category`可选，用于细分日志类型） |
-| `detection`      | 必填         | 嵌套结构      | 核心检测逻辑，包含 “匹配条件 + 时间窗口 + 触发条件” | 详见下文 “detection 关键字与逻辑”                            |
-| `falsepositives` | 可选         | 字符串 / 数组 | 常见误报场景，帮助分析师排查                        | `falsepositives: [- Administrative activity, - Directory assessment tools]` |
-| `level`          | 可选         | 枚举          | 告警优先级，指导响应流程                            | `level: high`（可选值：`informational`/`low`/`medium`/`high`/`critical`） |
-| `tags`           | 可选         | 数组          | 规则分类标签（如 MITRE ATT&CK、技术类型）           | `tags: [- attack.t1110, - brute_force, - windows]`           |
-| `fields`         | 可选         | 数组          | 告警触发时需展示的关键字段（便于溯源）              | `fields: [- TargetUserName, - TargetDomainName, - src_ip]`   |
+| `logsource`      | 必填         | 嵌套结构      | 定义日志来源，决定规则适用的日志范围                | 示例：` logsource:``product: windows``service: security``category: logon `（`category`可选，用于细分日志类型）                |
+| `detection`      | 必填         | 嵌套结构      | 核心检测逻辑，包含 “匹配条件 + 时间窗口 + 触发条件” | 详见下文 “detection 关键字与逻辑”                                                                                             |
+| `falsepositives` | 可选         | 字符串 / 数组 | 常见误报场景，帮助分析师排查                        | `falsepositives: [- Administrative activity, - Directory assessment tools]`                                                   |
+| `level`          | 可选         | 枚举          | 告警优先级，指导响应流程                            | `level: high`（可选值：`informational`/`low`/`medium`/`high`/`critical`）                                                     |
+| `tags`           | 可选         | 数组          | 规则分类标签（如 MITRE ATT&CK、技术类型）           | `tags: [- attack.t1110, - brute_force, - windows]`                                                                            |
+| `fields`         | 可选         | 数组          | 告警触发时需展示的关键字段（便于溯源）              | `fields: [- TargetUserName, - TargetDomainName, - src_ip]`                                                                    |
 
 ### 3. `detection`核心关键字与逻辑
 
@@ -67,7 +66,7 @@ fields: 需展示的关键字段（可选，数组形式，如TargetUserName/src
 | `endswith`   | 字段值以指定字符串结尾 | `SubjectUserName | endswith: $`（匹配机器账户）     |
 | `startswith` | 字段值以指定字符串开头 | `Image           | startswith: C:\Windows\System32` |
 | `contains`   | 字段值包含指定字符串   | `CommandLine     | contains: powershell.exe`        |
-| `regex`      | 字段值匹配正则表达式   | `UserAgent       | regex: ^Mozilla/5.0.*Chrome/`    |
+| `regex`      | 字段值匹配正则表达式   | `UserAgent       | regex: ^Mozilla/5.0.\*Chrome/`   |
 | `not`        | 排除指定值（取反）     | `EventID         | not: 4624`（排除成功登录事件）   |
 
 #### （2）`timeframe`：时间窗口
@@ -118,16 +117,16 @@ falsepositives: 误报场景（可选，同基础规则）
 
 ### 3. 关联规则字段详解
 
-| 字段名        | 必填 / 可选 | 类型     | 核心作用                                   | 示例与说明                                                   |
-| ------------- | ----------- | -------- | ------------------------------------------ | ------------------------------------------------------------ |
-| `correlation` | 必填        | 嵌套结构 | 关联规则的核心逻辑容器                     | 包含`type`/`rules`/`timespan`等子字段，替代基础规则的`detection` |
-| `type`        | 必填        | 枚举     | 关联类型，决定事件关系的分析逻辑           | `type: event_count`（可选值：`event_count`/`value_count`/`temporal`/`ordered_temporal`） |
-| `rules`       | 必填        | 数组     | 引用的基础规则列表（通过基础规则的`name`） | `rules: [- failed_logon, - privileged_group_enumeration]`（需确保基础规则的`name`为对应值） |
-| `group-by`    | 可选        | 数组     | 按指定字段分组聚合事件（如按用户 / IP）    | `group-by: [- TargetUserName, - TargetDomainName]`（分析单个用户的事件） |
-| `timespan`    | 必填        | 字符串   | 定义 “多久内的事件视为相关”                | `timespan: 5m`（5 分钟内的事件参与关联）、`timespan: 10s`（10 秒内） |
-| `condition`   | 必填        | 嵌套结构 | 关联触发的阈值条件                         | 示例 1（`event_count`）：`condition: {gte: 10}`（事件数≥10）；示例 2（`value_count`）：`condition: {gte: 4, field: TargetUserName}`（字段不同值数≥4） |
-| `generate`    | 可选        | 布尔值   | 转换时是否保留基础规则的查询逻辑           | `generate: true`（默认 false，保留基础规则便于调试）         |
-| `aliases`     | 可选        | 嵌套结构 | 跨日志源字段映射（解决字段名不一致问题）   | 示例：`aliases:``ip:``rule_with_src_ip: src_ip``rule_with_dest_ip: dest_ip`（将两个规则的不同字段映射为虚拟字段`ip`） |
+| 字段名        | 必填 / 可选 | 类型     | 核心作用                                   | 示例与说明                                                                                                                                              |
+| ------------- | ----------- | -------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `correlation` | 必填        | 嵌套结构 | 关联规则的核心逻辑容器                     | 包含`type`/`rules`/`timespan`等子字段，替代基础规则的`detection`                                                                                        |
+| `type`        | 必填        | 枚举     | 关联类型，决定事件关系的分析逻辑           | `type: event_count`（可选值：`event_count`/`value_count`/`temporal`/`ordered_temporal`）                                                                |
+| `rules`       | 必填        | 数组     | 引用的基础规则列表（通过基础规则的`name`） | `rules: [- failed_logon, - privileged_group_enumeration]`（需确保基础规则的`name`为对应值）                                                             |
+| `group-by`    | 可选        | 数组     | 按指定字段分组聚合事件（如按用户 / IP）    | `group-by: [- TargetUserName, - TargetDomainName]`（分析单个用户的事件）                                                                                |
+| `timespan`    | 必填        | 字符串   | 定义 “多久内的事件视为相关”                | `timespan: 5m`（5 分钟内的事件参与关联）、`timespan: 10s`（10 秒内）                                                                                    |
+| `condition`   | 必填        | 嵌套结构 | 关联触发的阈值条件                         | 示例 1（`event_count`）：`condition: {gte: 10}`（事件数 ≥10）；示例 2（`value_count`）：`condition: {gte: 4, field: TargetUserName}`（字段不同值数 ≥4） |
+| `generate`    | 可选        | 布尔值   | 转换时是否保留基础规则的查询逻辑           | `generate: true`（默认 false，保留基础规则便于调试）                                                                                                    |
+| `aliases`     | 可选        | 嵌套结构 | 跨日志源字段映射（解决字段名不一致问题）   | 示例：` aliases:``ip:``rule_with_src_ip: src_ip``rule_with_dest_ip: dest_ip `（将两个规则的不同字段映射为虚拟字段`ip`）                                 |
 
 ### 4. 字段别名（Aliases）使用场景与示例
 
@@ -143,19 +142,17 @@ falsepositives: 误报场景（可选，同基础规则）
   correlation:
     type: temporal
     rules:
-      - web_access_rule  # 基础规则1，字段为src_ip
-      - attack_rule      # 基础规则2，字段为dest_ip
+      - web_access_rule # 基础规则1，字段为src_ip
+      - attack_rule # 基础规则2，字段为dest_ip
     aliases:
-      ip:  # 虚拟字段ip
-        web_access_rule: src_ip  # 规则1的src_ip映射到ip
-        attack_rule: dest_ip     # 规则2的dest_ip映射到ip
+      ip: # 虚拟字段ip
+        web_access_rule: src_ip # 规则1的src_ip映射到ip
+        attack_rule: dest_ip # 规则2的dest_ip映射到ip
     group-by:
-      - ip  # 按虚拟字段ip分组
+      - ip # 按虚拟字段ip分组
     timespan: 5m
-    condition: {}  # temporal类型无需阈值，存在即触发
+    condition: {} # temporal类型无需阈值，存在即触发
   ```
-
-  
 
 ## 三、Sigma 关联类型（4 种核心类型）
 
@@ -181,7 +178,7 @@ yaml
 sigma: 2.0
 title: Windows Failed Logon Event
 id: 9f9b9a7e-8c3f-4d1c-9a3e-6b3ca6f9a7e1
-name: failed_logon  # 关联规则将引用此 name
+name: failed_logon # 关联规则将引用此 name
 status: test
 description: 单条 4625 失败登录事件，排除以 $ 结尾的机器账户
 author: you
@@ -195,7 +192,7 @@ detection:
   selection:
     EventID: 4625
   filter_machine:
-    SubjectUserName|endswith: "$"   # 排除机器账户
+    SubjectUserName|endswith: "$" # 排除机器账户
   condition: selection and not filter_machine
 
 level: medium
@@ -220,7 +217,7 @@ date: 2025-10-09
 correlation:
   type: event_count
   rules:
-    - failed_logon            # 按 name 引用上面的基础规则
+    - failed_logon # 按 name 引用上面的基础规则
   group-by:
     - TargetUserName
     - TargetDomainName
@@ -232,7 +229,6 @@ level: high
 tags:
   - attack.t1110
   - brute_force
-
 ```
 
 ### 2. `value_count`：字段值多样性关联
@@ -298,12 +294,12 @@ date: 2025-10-09
 correlation:
   type: value_count
   rules:
-    - privileged_group_enumeration   # 按 name 引用上面的基础规则
+    - privileged_group_enumeration # 按 name 引用上面的基础规则
   group-by:
-    - SubjectUserName                # 按枚举发起用户分组
+    - SubjectUserName # 按枚举发起用户分组
   timespan: 15m
   condition:
-    field: TargetUserName            # 对不同组名去重计数
+    field: TargetUserName # 对不同组名去重计数
     gte: 4
 
 level: high
@@ -346,10 +342,10 @@ logsource:
 
 detection:
   selection:
-    cs-method: 'POST'
+    cs-method: "POST"
     cs-uri-query:
-      - '*/json/setup-restore-local.action*'
-      - '*/setup/setupadministrator.action*'
+      - "*/json/setup-restore-local.action*"
+      - "*/setup/setupadministrator.action*"
     sc-status:
       - 200
       - 302
@@ -385,7 +381,7 @@ detection:
     ParentImage:
       - '*\tomcat8.exe'
       - '*\tomcat9.exe'
-    ParentCommandLine: '*confluence*'
+    ParentCommandLine: "*confluence*"
     Image:
       - '*\cmd.exe'
       - '*\powershell.exe'
@@ -424,19 +420,18 @@ tags:
   - cve.2023-22518
   - attack.initial_access
   - attack.execution
-
 ```
 
 ### 4. temporal_ordered：有序时间关联
 
 #### 核心逻辑
 
-在`temporal`基础上增加**事件顺序要求**（如 “先失败登录→后成功登录”），需严格满足 “事件 A 发生在事件 B 之前”。
+在`temporal`基础上增加**事件顺序要求**（如 “先失败登录 → 后成功登录”），需严格满足 “事件 A 发生在事件 B 之前”。
 
 #### 适用场景
 
-- 强依赖顺序的攻击（如 “先执行命令注入→再写入后门文件→最后反弹 shell”）；
-- 特定操作流程异常（如 “先注销账户→后登录账户”，不符合正常操作顺序）。
+- 强依赖顺序的攻击（如 “先执行命令注入 → 再写入后门文件 → 最后反弹 shell”）；
+- 特定操作流程异常（如 “先注销账户 → 后登录账户”，不符合正常操作顺序）。
 
 #### 关键注意事项（需谨慎使用）
 
@@ -445,7 +440,7 @@ tags:
 3. **多数场景无需顺序**：多数攻击检测中，“时间共存” 已足够（如失败登录 + 成功登录无论顺序均需警惕）；
 4. **SIEM 支持有限**：部分 SIEM（如早期 ELK）无法通过查询语言实现事件顺序判断。
 
-#### 示例（简化版：先失败登录→后成功登录）
+#### 示例（简化版：先失败登录 → 后成功登录）
 
 yaml
 
@@ -500,8 +495,8 @@ date: 2025-10-10
 correlation:
   type: temporal_ordered
   rules:
-    - failed_logon      # 先发生
-    - success_logon     # 后发生
+    - failed_logon # 先发生
+    - success_logon # 后发生
   group-by:
     - src_ip
     - TargetUserName
@@ -510,7 +505,6 @@ correlation:
   # condition: all
 level: high
 tags: [windows, brute_force.followed_by_success, detection.ordered_temporal]
-
 ```
 
 ## 三、核心关键字汇总（基础 + 关联规则）
