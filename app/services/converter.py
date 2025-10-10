@@ -33,6 +33,7 @@ class AggregationResult:
     window: Optional[str]
     group_by: List[str] = field(default_factory=list)
     threshold: Optional[int] = None
+    threshold_operator: str = ">="
     query: Optional[str] = None
     note: Optional[str] = None
 
@@ -452,7 +453,7 @@ class AggregationQueryBuilder:
         self.metadata = self._merge_metadata()
         self.notes: List[str] = []
         self.window = self._resolve_window()
-        self.threshold = self._resolve_threshold()
+        self.threshold, self.threshold_operator = self._resolve_threshold()
         self.group_by = self._resolve_group_by()
         self.event_time_column = self._resolve_event_time_column()
         self.pattern_alias = self._resolve_pattern_alias()
@@ -478,6 +479,7 @@ class AggregationQueryBuilder:
                 window=self.window,
                 group_by=self.group_by,
                 threshold=self.threshold,
+                threshold_operator=self.threshold_operator,
                 query=None,
                 note=self._notes_text(),
             )
@@ -493,6 +495,7 @@ class AggregationQueryBuilder:
             window=self.window,
             group_by=self.group_by,
             threshold=self.threshold,
+            threshold_operator=self.threshold_operator,
             query=query,
             note=self._notes_text(),
         )
@@ -591,25 +594,28 @@ class AggregationQueryBuilder:
         )
         return DEFAULT_AGGREGATION_WINDOW
 
-    def _resolve_threshold(self) -> int:
+    def _resolve_threshold(self) -> Tuple[int, str]:
         condition = getattr(self.correlation_rule, "condition", None)
         if condition is not None:
             count = getattr(condition, "count", None)
             threshold = self._coerce_positive_int(count)
             if threshold is not None:
                 op_name = getattr(getattr(condition, "op", None), "name", "").upper()
-                if op_name and op_name not in {"GTE", "GE", "EQ"}:
-                    self.notes.append(
-                        f"Correlation condition operator '{op_name.lower()}' may require manual review."
-                    )
-                return threshold
+                operator_token = self._map_condition_operator(op_name)
+                if operator_token is None:
+                    if op_name:
+                        self.notes.append(
+                            f"Correlation condition operator '{op_name.lower()}' is not supported; defaulted to '>='."
+                        )
+                    operator_token = ">="
+                return threshold, operator_token
         meta_threshold = self._coerce_positive_int(self.metadata.get("aggregation_threshold"))
         if meta_threshold is not None:
-            return meta_threshold
+            return meta_threshold, ">="
         self.notes.append(
             f"Threshold not provided; defaulted to {DEFAULT_AGGREGATION_THRESHOLD}."
         )
-        return DEFAULT_AGGREGATION_THRESHOLD
+        return DEFAULT_AGGREGATION_THRESHOLD, ">="
 
     def _resolve_group_by(self) -> List[str]:
         if getattr(self.correlation_rule, "group_by", None):
@@ -635,6 +641,20 @@ class AggregationQueryBuilder:
         if isinstance(metadata_field, str) and metadata_field.strip():
             return metadata_field.strip()
         return None
+
+    def _map_condition_operator(self, op_name: str) -> Optional[str]:
+        if not op_name:
+            return None
+        mapping = {
+            "GTE": ">=",
+            "GE": ">=",
+            "GT": ">",
+            "LTE": "<=",
+            "LE": "<=",
+            "LT": "<",
+            "EQ": "=",
+        }
+        return mapping.get(op_name)
 
     def _build_flink_sql_query(self, corr_type: str) -> Optional[str]:
         if corr_type == "event_count":
@@ -666,6 +686,7 @@ class AggregationQueryBuilder:
             self.notes.append("Populate GROUP BY dimensions to complete the aggregation query.")
         if self.event_time_column == SQL_EVENT_TIME_COLUMN:
             self.notes.append("Event time column not provided; defaulted to 'event_time'.")
+        operator = self.threshold_operator
         query_lines = [
             "WITH base_events AS (",
             "    SELECT *",
@@ -685,7 +706,7 @@ class AggregationQueryBuilder:
             ")",
             "GROUP BY",
             f"    {group_section}",
-            f"HAVING COUNT(*) >= {self.threshold};",
+            f"HAVING COUNT(*) {operator} {self.threshold};",
         ]
         return "\n".join(query_lines)
 
@@ -749,11 +770,7 @@ class AggregationQueryBuilder:
         select_section = ",\n    ".join(select_columns)
         group_columns = ["window_start", "window_end"] + self.group_by
         group_section = ",\n    ".join(group_columns)
-        required_matches = max(self.threshold, len(parsed_entries))
-        if required_matches > self.threshold:
-            self.notes.append(
-                f"Temporal correlation requires matches for {len(parsed_entries)} distinct rules; threshold adjusted."
-            )
+        threshold_value, operator = self._normalise_temporal_threshold(len(parsed_entries))
         if not self.group_by:
             self.notes.append("Populate GROUP BY dimensions to complete the aggregation query.")
         if self.event_time_column == SQL_EVENT_TIME_COLUMN:
@@ -769,7 +786,7 @@ class AggregationQueryBuilder:
             ")",
             "GROUP BY",
             f"    {group_section}",
-            f"HAVING COUNT(DISTINCT rule_name) >= {required_matches};",
+            f"HAVING COUNT(DISTINCT rule_name) {operator} {threshold_value};",
         ]
         return "\n".join(query_lines)
 
@@ -783,7 +800,7 @@ class AggregationQueryBuilder:
             self.notes.append("Aviator aggregation requires grouping dimensions; added placeholder.")
         group_clause = ", ".join(self.group_by) if self.group_by else "<add-group-dimensions>"
         query_lines = [
-            f"WINDOW {self.window} BY {group_clause} HAVING COUNT_DISTINCT({value_field}) >= {self.threshold}",
+            f"WINDOW {self.window} BY {group_clause} HAVING COUNT_DISTINCT({value_field}) {self.threshold_operator} {self.threshold}",
             "FILTER (",
             f"  {base_expression}",
             ")",
@@ -798,11 +815,7 @@ class AggregationQueryBuilder:
             self.notes.append("Aviator aggregation requires grouping dimensions; added placeholder.")
         group_clause = ", ".join(self.group_by) if self.group_by else "<add-group-dimensions>"
         header = f"WINDOW {self.window} BY {group_clause} MATCH {'SEQUENCE' if ordered else 'CO_OCCURRENCE'}"
-        required_matches = max(self.threshold, len(self.rule_entries))
-        if required_matches > self.threshold:
-            self.notes.append(
-                f"Temporal correlation requires matches for {len(self.rule_entries)} rules; threshold adjusted."
-            )
+        required_matches, operator = self._normalise_temporal_threshold(len(self.rule_entries))
         pattern_lines: List[str] = []
         for idx, entry in enumerate(self.rule_entries):
             expr = entry.get("query") or (self.base_query if entry.get("rule") is self.base_rule else None)
@@ -820,12 +833,52 @@ class AggregationQueryBuilder:
         query_lines = [header, "PATTERN ("]
         query_lines.extend(pattern_lines)
         query_lines.append(")")
-        query_lines.append(f"REQUIRES >= {required_matches} MATCHES")
+        query_lines.append(f"REQUIRES {operator} {required_matches} MATCHES")
         return "\n".join(query_lines)
+
+    def _alias_sequence(self, count: int) -> List[str]:
+        if count <= 0:
+            return []
+        aliases: List[str] = []
+        primary_alias = self.pattern_alias or self.options.get("pattern_name")
+        if isinstance(primary_alias, str) and primary_alias.strip():
+            aliases.append(primary_alias.strip())
+        letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        idx = 0
+        while len(aliases) < count:
+            candidate = letters[idx % len(letters)]
+            idx += 1
+            if any(candidate.lower() == existing.lower() for existing in aliases):
+                continue
+            aliases.append(candidate)
+        return aliases[:count]
+
+    def _normalise_temporal_threshold(self, rule_count: int) -> Tuple[int, str]:
+        operator = self.threshold_operator
+        if operator not in {">=", "="}:
+            self.notes.append(
+                f"Temporal correlation operator '{operator}' is not supported; defaulted to '>='."
+            )
+            operator = ">="
+        threshold_value = self.threshold
+        if operator == ">=" and threshold_value < rule_count:
+            self.notes.append(
+                f"Temporal correlation requires matches for {rule_count} rules; threshold adjusted."
+            )
+            threshold_value = rule_count
+        if operator == "=" and threshold_value != rule_count:
+            self.notes.append(
+                f"Temporal correlation with '=' operator expects threshold equal to rule count; adjusted to {rule_count}."
+            )
+            threshold_value = rule_count
+        self.threshold = threshold_value
+        self.threshold_operator = operator
+        return threshold_value, operator
 
     def _build_flink_sql_temporal_ordered(self, parsed_entries: List[Dict[str, str]]) -> str:
         interval_expr = self._to_flink_interval(self.window)
         cte_lines = self._build_filtered_events_cte(parsed_entries)
+        self._normalise_temporal_threshold(len(parsed_entries))
         pattern_aliases = [f"R{index + 1}" for index in range(len(parsed_entries))]
         pattern_clause = " ".join(pattern_aliases)
         measures = [
@@ -896,6 +949,7 @@ class AggregationQueryBuilder:
             self.notes.append("Populate GROUP BY dimensions to complete the aggregation query.")
         if self.event_time_column == SQL_EVENT_TIME_COLUMN:
             self.notes.append("Event time column not provided; defaulted to 'event_time'.")
+        operator = self.threshold_operator
         query_lines = [
             "WITH base_events AS (",
             "    SELECT *",
@@ -915,7 +969,7 @@ class AggregationQueryBuilder:
             ")",
             "GROUP BY",
             f"    {group_section}",
-            f"HAVING COUNT(DISTINCT {value_field}) >= {self.threshold};",
+            f"HAVING COUNT(DISTINCT {value_field}) {operator} {self.threshold};",
         ]
         return "\n".join(query_lines)
 
@@ -938,7 +992,7 @@ class AggregationQueryBuilder:
             self.notes.append("Aviator aggregation requires grouping dimensions; added placeholder.")
         group_clause = ", ".join(self.group_by) if self.group_by else "<add-group-dimensions>"
         query_lines = [
-            f"WINDOW {self.window} BY {group_clause} HAVING COUNT >= {self.threshold}",
+            f"WINDOW {self.window} BY {group_clause} HAVING COUNT {self.threshold_operator} {self.threshold}",
             "FILTER (",
             f"  {base_expression}",
             ")",
@@ -949,6 +1003,12 @@ class AggregationQueryBuilder:
     def _build_flink_cep_query(self, corr_type: str) -> Optional[str]:
         if corr_type == "event_count":
             return self._build_flink_cep_event_count()
+        if corr_type == "value_count":
+            return self._build_flink_cep_value_count()
+        if corr_type == "temporal":
+            return self._build_flink_cep_temporal(ordered=False)
+        if corr_type == "temporal_ordered":
+            return self._build_flink_cep_temporal(ordered=True)
         self.notes.append(f"Flink CEP conversion for '{corr_type}' is not available.")
         return None
 
@@ -957,67 +1017,82 @@ class AggregationQueryBuilder:
         if not pattern_name:
             pattern_name = "A"
             self.notes.append("Pattern name not detected; defaulted to 'A'.")
-        condition = self._extract_after_keyword(self.base_query, "WHERE")
-        if not condition:
-            condition = "TRUE -- TODO: apply base rule conditions"
-            self.notes.append("Unable to read CEP WHERE clause from base query.")
-        else:
-            condition = condition.rstrip(";")
-            first_token = condition.split()[0]
-            if "." not in first_token:
-                condition = f"{pattern_name}.{condition}"
-            else:
-                existing_alias = first_token.split(".", 1)[0]
-                if existing_alias.lower() != pattern_name.lower():
-                    condition = condition.replace(f"{existing_alias}.", f"{pattern_name}.")
-                    self.notes.append(f"Replaced CEP alias '{existing_alias}' with '{pattern_name}'.")
-        unqualified_tokens: List[str] = []
-        for fragment in re.split(r"\bAND\b|\bOR\b", condition, flags=re.IGNORECASE):
-            fragment = fragment.strip()
-            if not fragment:
-                continue
-            if f"{pattern_name}." not in fragment:
-                unqualified_tokens.append(fragment)
-        if unqualified_tokens:
-            updated_condition = condition
-            for fragment in unqualified_tokens:
-                stripped_fragment = fragment.lstrip("(").strip()
-                if not stripped_fragment:
-                    continue
-                replacement = fragment.replace(
-                    stripped_fragment,
-                    f"{pattern_name}.{stripped_fragment}",
-                    1
-                )
-                updated_condition = updated_condition.replace(fragment, replacement, 1)
-            condition = updated_condition
-        remaining_tokens: List[str] = []
-        for fragment in re.split(r"\bAND\b|\bOR\b", condition, flags=re.IGNORECASE):
-            fragment = fragment.strip()
-            if not fragment:
-                continue
-            if f"{pattern_name}." not in fragment:
-                remaining_tokens.append(fragment)
-        if remaining_tokens:
-            preview = ", ".join(remaining_tokens[:3])
-            if len(remaining_tokens) > 3:
-                preview += " ..."
-            self.notes.append("Review CEP WHERE clause to ensure the pattern alias is applied: " + preview)
-        if not self.group_by:
-            self.notes.append("CEP aggregation is missing GROUP BY dimensions.")
+        condition = self._condition_for_cep_alias(self.base_query, pattern_name)
         group_clause = (
             "GROUP BY " + ", ".join(self.group_by)
             if self.group_by
             else "-- TODO: supply GROUP BY dimensions"
         )
+        if not self.group_by:
+            self.notes.append("CEP aggregation is missing GROUP BY dimensions.")
         query_parts = [
             f"PATTERN SEQ({pattern_name}+)",
             f"WITHIN {self.window}",
             f"WHERE {condition}",
             group_clause,
-            f"HAVING COUNT({pattern_name}) >= {self.threshold}",
+            f"HAVING COUNT({pattern_name}) {self.threshold_operator} {self.threshold}",
         ]
         return "\n".join(query_parts)
+
+    def _build_flink_cep_value_count(self) -> Optional[str]:
+        value_field = self._resolve_value_field()
+        if not value_field:
+            self.notes.append("Value count correlation requires a field reference; skipping CEP aggregation.")
+            return None
+        pattern_name = self.pattern_alias or self.options.get("pattern_name") or self._extract_pattern_name()
+        if not pattern_name:
+            pattern_name = "A"
+            self.notes.append("Pattern name not detected; defaulted to 'A'.")
+        condition = self._condition_for_cep_alias(self.base_query, pattern_name)
+        group_clause = (
+            "GROUP BY " + ", ".join(self.group_by)
+            if self.group_by
+            else "-- TODO: supply GROUP BY dimensions"
+        )
+        if not self.group_by:
+            self.notes.append("CEP aggregation is missing GROUP BY dimensions.")
+        query_parts = [
+            f"PATTERN SEQ({pattern_name}+)",
+            f"WITHIN {self.window}",
+            f"WHERE {condition}",
+            group_clause,
+            f"HAVING COUNT(DISTINCT {pattern_name}.{value_field}) {self.threshold_operator} {self.threshold}",
+        ]
+        return "\n".join(query_parts)
+
+    def _build_flink_cep_temporal(self, *, ordered: bool) -> Optional[str]:
+        if len(self.rule_entries) < 2:
+            self.notes.append("Temporal CEP correlation requires at least two referenced rules; aggregation omitted.")
+            return None
+        threshold_value, operator = self._normalise_temporal_threshold(len(self.rule_entries))
+        if operator != "=":
+            self.notes.append(
+                "CEP temporal pattern enforces one occurrence per rule; review threshold logic if stricter counting is required."
+            )
+        aliases = self._alias_sequence(len(self.rule_entries))
+        if ordered:
+            pattern_clause = ", ".join(aliases)
+        else:
+            pattern_clause = ", ".join(aliases)
+            self.notes.append(
+                "Unordered temporal correlation emitted as sequential CEP pattern; adjust order or conditions if needed."
+            )
+        condition_lines: List[str] = []
+        for alias, entry in zip(aliases, self.rule_entries):
+            condition = self._condition_for_cep_alias(entry.get("query") or self.base_query, alias)
+            condition_lines.append(f"  {condition}")
+        query_lines: List[str] = [
+            f"PATTERN SEQ({pattern_clause})",
+            f"WITHIN {self.window}",
+            "WHERE",
+            " AND\n".join(condition_lines),
+        ]
+        if self.group_by:
+            query_lines.append("GROUP BY " + ", ".join(self.group_by))
+        else:
+            self.notes.append("CEP temporal aggregation missing GROUP BY dimensions; add partitions as needed.")
+            query_lines.append("-- TODO: add GROUP BY dimensions for CEP aggregation")
+        return "\n".join(query_lines)
     def _to_flink_interval(self, window: str) -> str:
         match = re.fullmatch(r"(\d+)([smhd])", window.strip(), re.IGNORECASE)
         if match:
@@ -1030,6 +1105,52 @@ class AggregationQueryBuilder:
             f"Window '{window}' could not be translated to a Flink INTERVAL literal; inserted as raw text."
         )
         return f"INTERVAL '{window}'"
+
+    def _condition_for_cep_alias(self, query: str, alias: str) -> str:
+        condition = self._extract_after_keyword(query, "WHERE")
+        if not condition:
+            self.notes.append(f"Unable to read CEP WHERE clause from rule query for alias '{alias}'.")
+            return f"{alias}.-- TODO: add conditions"
+        condition = condition.rstrip(";").strip()
+        if not condition:
+            self.notes.append(f"Missing CEP condition content for alias '{alias}'.")
+            return f"{alias}.-- TODO: add conditions"
+
+        def _prefix_fragment(fragment: str) -> str:
+            fragment = fragment.strip()
+            if not fragment:
+                return fragment
+            first_token = fragment.split()[0]
+            if "." not in first_token:
+                return f"{alias}.{fragment}"
+            existing_alias = first_token.split(".", 1)[0]
+            if existing_alias.lower() != alias.lower():
+                self.notes.append(
+                    f"Replaced CEP alias '{existing_alias}' with '{alias}' in condition fragment."
+                )
+                return fragment.replace(f"{existing_alias}.", f"{alias}.", 1)
+            return fragment
+
+        fragments: List[str] = []
+        last_index = 0
+        for match in re.finditer(r"\bAND\b|\bOR\b", condition, flags=re.IGNORECASE):
+            fragment = condition[last_index:match.start()].strip()
+            operator = match.group(0).upper()
+            if fragment:
+                fragments.append(_prefix_fragment(fragment))
+                fragments.append(operator)
+            last_index = match.end()
+        remainder = condition[last_index:].strip()
+        if remainder:
+            fragments.append(_prefix_fragment(remainder))
+
+        rebuilt: List[str] = []
+        for item in fragments:
+            if item in {"AND", "OR"}:
+                rebuilt.append(item)
+            else:
+                rebuilt.append(item)
+        return " ".join(rebuilt)
 
     def _extract_sql_parts(self, query_text: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         query = (query_text or self.base_query).strip().rstrip(';')

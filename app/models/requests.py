@@ -78,6 +78,7 @@ class AggregationConversion(BaseModel):
     window: Optional[str] = Field(default=None, description="Aggregation window, for example '5m'.")
     group_by: List[str] = Field(default_factory=list, description="Aggregation dimensions")
     threshold: Optional[int] = Field(default=None, description="Minimum count threshold")
+    threshold_operator: str = Field(default=">=", description="Comparison operator applied to the threshold")
     query: Optional[str] = Field(default=None, description="Target query containing window and grouping clauses")
     note: Optional[str] = Field(default=None, description="Additional hints when generating the aggregation query")
 
