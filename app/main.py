@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List
+from dataclasses import asdict
 
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
@@ -8,10 +9,13 @@ from fastapi.responses import JSONResponse
 from app.models.requests import (
     BatchRuleConversionRequest,
     RuleConversionRequest,
+    RuleConversionResponse,
+    AggregationConversion,
     RuleParseRequest,
     RuleParseResponse,
     RuleValidationRequest,
     RuleValidationResponse,
+    SigmaRulePayload,
 )
 from app.services.converter import SigmaConverterService
 from app.services.parser import SigmaParserService
@@ -45,8 +49,24 @@ def get_converter_service(parser_service: SigmaParserService) -> SigmaConverterS
 @app.post("/rules/parse", response_model=RuleParseResponse)
 async def parse_rule(request: RuleParseRequest) -> RuleParseResponse:
     parser_service = get_parser_service()
+    converter_service = get_converter_service(parser_service)
+    payload = SigmaRulePayload(rule_yaml=request.rule_yaml)
     parsed = parser_service.parse_yaml(request.rule_yaml)
-    return RuleParseResponse(parsed=parsed)
+    conversions = []
+    for result in converter_service.convert_all_formats(payload):
+        aggregation = (
+            AggregationConversion(**asdict(result.aggregation))
+            if result.aggregation
+            else None
+        )
+        conversions.append(
+            RuleConversionResponse(
+                format=result.format,
+                query=result.query,
+                aggregation=aggregation,
+            )
+        )
+    return RuleParseResponse(parsed=parsed, conversions=conversions)
 
 
 @app.post("/rules/validate", response_model=RuleValidationResponse)
@@ -57,20 +77,43 @@ async def validate_rule(request: RuleValidationRequest) -> RuleValidationRespons
     return RuleValidationResponse(valid=valid, errors=errors or None)
 
 
-@app.post("/rules/convert")
-async def convert_rule(request: RuleConversionRequest) -> dict:
+@app.post("/rules/convert", response_model=RuleConversionResponse)
+async def convert_rule(request: RuleConversionRequest) -> RuleConversionResponse:
     parser_service = get_parser_service()
     converter_service = get_converter_service(parser_service)
     result = converter_service.convert_rule(request)
-    return {"format": result.format, "query": result.query}
+    aggregation = (
+        AggregationConversion(**asdict(result.aggregation))
+        if result.aggregation
+        else None
+    )
+    return RuleConversionResponse(
+        format=result.format,
+        query=result.query,
+        aggregation=aggregation,
+    )
 
 
 @app.post("/rules/convert/batch")
-async def convert_rules_batch(request: BatchRuleConversionRequest) -> List[dict]:
+async def convert_rules_batch(request: BatchRuleConversionRequest) -> List[RuleConversionResponse]:
     parser_service = get_parser_service()
     converter_service = get_converter_service(parser_service)
     results = converter_service.convert_batch(request)
-    return [{"format": item.format, "query": item.query} for item in results]
+    response: List[RuleConversionResponse] = []
+    for item in results:
+        aggregation = (
+            AggregationConversion(**asdict(item.aggregation))
+            if item.aggregation
+            else None
+        )
+        response.append(
+            RuleConversionResponse(
+                format=item.format,
+                query=item.query,
+                aggregation=aggregation,
+            )
+        )
+    return response
 
 
 @app.get("/health")

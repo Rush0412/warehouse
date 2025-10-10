@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 
 from .enums import RuleProcessingMode, RuleTargetFormat
 
@@ -18,7 +18,8 @@ class SigmaRulePayload(BaseModel):
         description="Parsed sigma rule representation that adheres to the sigma specification.",
     )
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _ensure_payload(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         rule_yaml = values.get("rule_yaml")
         parsed_rule = values.get("parsed_rule")
@@ -37,6 +38,7 @@ class RuleParseResponse(BaseModel):
     """Response structure for parsed sigma rules."""
 
     parsed: Any
+    conversions: List[RuleConversionResponse] = Field(default_factory=list)
     errors: Optional[List[str]] = None
 
 
@@ -70,6 +72,28 @@ class RuleConversionRequest(BaseModel):
     )
 
 
+class AggregationConversion(BaseModel):
+    """Represents aggregation-specific conversion output."""
+
+    window: Optional[str] = Field(default=None, description="Aggregation window, for example '5m'.")
+    group_by: List[str] = Field(default_factory=list, description="Aggregation dimensions")
+    threshold: Optional[int] = Field(default=None, description="Minimum count threshold")
+    query: Optional[str] = Field(default=None, description="Target query containing window and grouping clauses")
+    note: Optional[str] = Field(default=None, description="Additional hints when generating the aggregation query")
+
+
+class RuleConversionResponse(BaseModel):
+    """Standard response payload for a single conversion result."""
+
+    format: RuleTargetFormat
+    query: str
+    aggregation: Optional[AggregationConversion] = Field(
+        default=None, description="Aggregation query output"
+    )
+
+
+
+
 class BatchRuleConversionItem(BaseModel):
     """Single entry for batch conversion requests."""
 
@@ -83,9 +107,9 @@ class BatchRuleConversionRequest(BaseModel):
     target_format: RuleTargetFormat
     rules: List[BatchRuleConversionItem]
 
-    @root_validator
-    def _ensure_rules(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        rules = values.get("rules")
-        if not rules:
+    @model_validator(mode="after")
+    def _ensure_rules(self) -> "BatchRuleConversionRequest":
+        if not self.rules:
             raise ValueError("At least one rule must be provided for batch conversion.")
-        return values
+        return self
+

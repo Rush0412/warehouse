@@ -13,21 +13,25 @@
             ></textarea>
           </label>
 
-          <div class="actions">
-            <div class="action-group">
-              <h3>快速操作</h3>
-              <div class="buttons">
-                <button type="button" class="btn primary" @click="handleParse" :disabled="isBusy">
-                  解析
-                </button>
-                <button type="button" class="btn secondary" @click="handleValidate" :disabled="isBusy">
-                  校验
-                </button>
-                <button type="button" class="btn accent" @click="handleConvert" :disabled="isBusy">
-                  转换
-                </button>
-              </div>
+          <aside class="actions-panel">
+            <header class="actions-panel__header">
+              <h3 class="actions-panel__title">快速操作</h3>
+              <p class="actions-panel__subtitle">解析、校验、转换常见流程，一键触发当前配置。</p>
+            </header>
+
+            <div class="actions-panel__buttons">
+              <button type="button" class="btn primary" @click="handleParse" :disabled="isBusy">
+                解析
+              </button>
+              <button type="button" class="btn secondary" @click="handleValidate" :disabled="isBusy">
+                校验
+              </button>
+              <button type="button" class="btn accent" @click="handleConvert" :disabled="isBusy">
+                转换
+              </button>
             </div>
+
+            <div class="actions-panel__divider" role="presentation"></div>
 
             <div class="field">
               <span class="field-label">目标格式</span>
@@ -38,23 +42,24 @@
               </select>
             </div>
 
-            <div class="options">
+            <div class="options actions-panel__options">
               <span class="field-label">附加参数（可选）</span>
               <textarea
                 v-model="optionsText"
                 class="textarea"
                 rows="6"
-                placeholder="JSON，例如 {\"namespace\": \"demo\"}"
+                placeholder='JSON，例如 {"namespace": "demo"}'
               ></textarea>
+              <p class="actions-panel__hint">例如 {"namespace": "demo"}，可传递目标表、命名空间等上下文信息。</p>
             </div>
 
-            <div class="field checkbox">
+            <div class="field checkbox actions-panel__proxy">
               <label>
                 <input type="checkbox" v-model="useApiProxy" />
                 <span>通过 <code>/api</code> 代理</span>
               </label>
             </div>
-          </div>
+          </aside>
         </div>
       </form>
 
@@ -63,13 +68,44 @@
         <pre>{{ message.body }}</pre>
       </section>
 
-      <section v-if="result" class="result">
-        <header>
-          <h3>转换结果</h3>
-          <span class="badge">{{ result.format }}</span>
-        </header>
-        <pre>{{ result.query }}</pre>
-      </section>
+      <div v-if="conversionResults.length" class="result-group">
+        <section
+          v-for="(item, index) in conversionResults"
+          :key="`${item.format}-${index}`"
+          class="result"
+        >
+          <header>
+            <h3>转换结果</h3>
+            <span class="badge">{{ item.format }}</span>
+          </header>
+
+          <div class="query-block">
+            <span class="query-label">基础查询</span>
+            <pre>{{ item.query }}</pre>
+          </div>
+
+          <div v-if="hasAggregation(item)" class="aggregation-block">
+            <div class="aggregation-header">
+              <span class="query-label">聚合查询</span>
+              <ul class="aggregation-meta">
+                <li v-if="item.aggregation?.window">
+                  <strong>窗口：</strong>{{ item.aggregation.window }}
+                </li>
+                <li v-if="item.aggregation?.group_by?.length">
+                  <strong>分组字段：</strong>{{ formatGroupBy(item.aggregation.group_by) }}
+                </li>
+                <li v-if="item.aggregation?.threshold !== null && item.aggregation?.threshold !== undefined">
+                  <strong>阈值：</strong>{{ item.aggregation.threshold }}
+                </li>
+              </ul>
+            </div>
+            <pre v-if="item.aggregation?.query">{{ item.aggregation.query }}</pre>
+            <p v-if="item.aggregation?.note" class="aggregation-note">
+              {{ item.aggregation.note }}
+            </p>
+          </div>
+        </section>
+      </div>
 
       <section v-if="validation" class="validation" :class="{ success: validation.valid, error: !validation.valid }">
         <header>
@@ -118,10 +154,27 @@ const targetFormat = ref("aviator");
 const optionsText = ref("{}");
 const isBusy = ref(false);
 const message = ref(null);
-const result = ref(null);
+const conversionResults = ref([]);
 const validation = ref(null);
 const parsed = ref(null);
 const useApiProxy = ref(true);
+
+function hasAggregation(item) {
+  const agg = item?.aggregation;
+  if (!agg) {
+    return false;
+  }
+  const hasGroup = Array.isArray(agg.group_by) && agg.group_by.length > 0;
+  return Boolean(agg.query || agg.window || (agg.threshold !== null && agg.threshold !== undefined) || hasGroup || agg.note);
+}
+
+function formatGroupBy(groupBy) {
+  if (!Array.isArray(groupBy) || !groupBy.length) {
+    return '-';
+  }
+  return groupBy.join(', ');
+}
+
 
 const endpointBase = computed(() => {
   if (useApiProxy.value) {
@@ -152,11 +205,13 @@ async function request(path, init) {
   return response.json();
 }
 
-function resetOutputs() {
+function resetOutputs({ keepParsed = false } = {}) {
   message.value = null;
-  result.value = null;
+  conversionResults.value = [];
   validation.value = null;
-  parsed.value = null;
+  if (!keepParsed) {
+    parsed.value = null;
+  }
 }
 
 async function handleParse() {
@@ -168,7 +223,14 @@ async function handleParse() {
       body: JSON.stringify({ rule_yaml: ruleYaml.value })
     });
     parsed.value = JSON.stringify(data.parsed, null, 2);
-    message.value = { type: "success", title: "解析成功", body: "已生成结构化 JSON" };
+    conversionResults.value = Array.isArray(data.conversions) ? data.conversions : [];
+    message.value = {
+      type: "success",
+      title: "解析成功",
+      body: conversionResults.value.length
+        ? `已包含 ${conversionResults.value.length} 条转换结果`
+        : "解析结果结构化 JSON"
+    };
   } catch (error) {
     message.value = { type: "error", title: "解析失败", body: error.message };
   } finally {
@@ -178,7 +240,7 @@ async function handleParse() {
 
 async function handleValidate() {
   isBusy.value = true;
-  resetOutputs();
+  resetOutputs({ keepParsed: true });
   try {
     const data = await request("/rules/validate", {
       method: "POST",
@@ -199,7 +261,7 @@ async function handleValidate() {
 
 async function handleConvert() {
   isBusy.value = true;
-  resetOutputs();
+  resetOutputs({ keepParsed: true });
   try {
     const options = buildOptions();
     const data = await request("/rules/convert", {
@@ -210,8 +272,8 @@ async function handleConvert() {
         options
       })
     });
-    result.value = data;
-    message.value = { type: "success", title: "转换成功", body: "见下方结果" };
+    conversionResults.value = Array.isArray(data) ? data : [data];
+    message.value = { type: "success", title: "转换成功", body: "已生成查询语句" };
   } catch (error) {
     message.value = { type: "error", title: "转换失败", body: error.message };
   } finally {
@@ -236,8 +298,9 @@ async function handleConvert() {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 1.5rem;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 2.5rem;
+  align-items: flex-start;
 }
 
 .field {
@@ -263,27 +326,73 @@ async function handleConvert() {
   background: #f8fafc;
 }
 
-.select {
-  background: #ffffff;
-}
-
-.actions {
+.actions-panel {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.5rem;
+  padding: 1.6rem;
+  border-radius: 1rem;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 90%);
+  box-shadow: 0 20px 45px -32px rgba(15, 23, 42, 0.35);
+  min-height: 100%;
 }
 
-.action-group h3 {
+.actions-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.actions-panel__title {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.05rem;
   color: #0f172a;
 }
 
-.buttons {
+.actions-panel__subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.actions-panel__buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
 }
+
+.actions-panel__divider {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.1), rgba(148, 163, 184, 0.5), rgba(148, 163, 184, 0.1));
+}
+
+.actions-panel__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.actions-panel__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.actions-panel__proxy {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px dashed rgba(148, 163, 184, 0.4);
+}
+
+.select {
+  background: #ffffff;
+}
+
+
+
 
 .btn {
   padding: 0.6rem 1.2rem;
@@ -362,6 +471,12 @@ async function handleConvert() {
   white-space: pre-wrap;
 }
 
+.result-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 .result,
 .validation,
 .parsed {
@@ -402,6 +517,56 @@ async function handleConvert() {
   word-break: break-word;
 }
 
+.query-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.query-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.aggregation-block {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem;
+  border-radius: 0.6rem;
+  background: rgba(15, 118, 110, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.2);
+}
+
+.aggregation-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.aggregation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: #bae6fd;
+}
+
+.aggregation-meta li strong {
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.aggregation-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #facc15;
+}
+
 .validation ul {
   margin: 0;
   padding-left: 1.3rem;
@@ -430,6 +595,11 @@ async function handleConvert() {
 @media (max-width: 960px) {
   .form-grid {
     grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .actions-panel {
+    margin-top: 0.5rem;
   }
 }
 </style>
